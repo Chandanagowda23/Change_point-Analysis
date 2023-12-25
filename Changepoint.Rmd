@@ -1,0 +1,105 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tibble)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(lubridate)
+library(ggplot2)
+library(tsibble)
+library(changepoint)
+```
+
+
+```{r}
+df <- readr::read_csv("UBHPC_8cores_NWChem_Wall_Clock_Time.csv",show_col_types = FALSE)
+df <- df %>% mutate(date = as.Date(date, format="%m/%d/%Y %H:%M")) %>%
+  as_tsibble(index = date)
+head(df)
+plot(df$date, df$run_time, type = "l", col = "red")
+```
+
+Due to sudden change in magnitude and trends pattern I can make out 4 segments in the plot.
+Below are the change points segmenting those which I can find:
+>"2017-11-09" to "2018-02-14" is the first segment.
+>"2018-02-14" to "2018-06-28" is the second segment.
+>"2018-06-28" to "2018-08-25" is the third segment.
+>"2018-08-25" to "2018-11-07" is the fourth segment.
+
+```{r}
+
+df$seg = 0
+change_point = c(ymd("2017-11-09"),ymd("2018-02-14"),ymd("2018-06-28"),ymd("2018-08-25"),ymd("2018-11-07"))
+
+for (i in seq_along(change_point)) {
+  df$seg[df$date >= change_point[i] & df$date < change_point[i + 1]] <- i
+}
+
+df <- df %>%
+  mutate(seg = ifelse(seg == 0, 4, seg))
+
+```
+
+
+```{r}
+df %>%
+  ggplot(aes(x = date, y = run_time)) +
+  geom_line() +
+  geom_vline(data = df, aes(xintercept = date, color = factor(seg)), linetype = "dashed")
+```
+
+```{r}
+ggplot(df, aes(x = run_time)) +
+  geom_histogram(binwidth = 1, fill = "blue", color = "black", alpha = 0.7)
+```
+
+```{r}
+
+par(mfrow = c(2, 2)) 
+for (i in 1:max(df$seg)) {
+  seg1 <- df[df$seg == i, ]
+  hist(seg1$run_time,col = "red")
+}
+```
+
+```{r}
+qqnorm(df$run_time)
+qqline(df$run_time, col = 5)
+```
+```{r}
+par(mfrow = c(2, 2)) 
+for (i in 1:max(df$seg)) {
+  seg1 <- df[df$seg == i, ]
+  qqnorm(seg1$run_time)
+  qqline(seg1$run_time, col = 5)
+}
+```
+
+Based on a visual review of the QQ plots and histograms for each segment, none of the distributions appear to be sufficiently normal. The presence of outliers in the QQ plots indicates that the data in these segments is not regularly distributed. When examining or modelling these segments, it is critical to consider other techniques or distributions because normality assumptions may not hold true.
+
+```{r}
+cpt_result <- cpt.meanvar(df$run_time, method = "PELT", test.stat = "Normal")
+cpts(cpt_result)
+param.est(cpt_result)
+print(pen.value(cpt_result))
+
+plot(cpt_result,cpt.width=3,cpt.col='blue')
+
+```
+
+```{r}
+v1.crops=cpt.var(df$run_time,method="PELT",penalty="CROPS",pen.value=c(22.27/8, 22.27*4))
+cpts.full(v1.crops)
+pen.value.full(v1.crops)
+plot(v1.crops,diagnostic=TRUE)
+plot(v1.crops,ncpts=8)
+plot(v1.crops,ncpts=3)
+```
+#18,16,12,11,8,7,6,3,1,0 possible change points
+The ideal choice will be 3 and 8 segments according to the elbow plot.
+
+My initial estimate of using four segments did not match the optimum results given by the CROPS platform. CROPS advised three and eight parts instead, indicating that my earlier option may not have been the best. The recommended numbers, three and eight, were more logical and fit better with the optimization criteria and goals after a comprehensive study of the CROPS data. This emphasizes the need of making informed decisions based on data-driven optimization, as well as the importance of incorporating data insights into decision-making processes.
+
+When runtime data does not follow a normal distribution, the usefulness of changepoint detection algorithms based on normality assumptions is in doubt.  It is recommended to look into alternate approaches that are more in line with the actual distribution of the data. Given the variety of data sources, specific statistical procedures may be more successful. For example, given the non-normal distribution of the runtime data, approaches built for distributions such as gamma or exponential might result in more meaningful and accurate changepoint identification. As a result, it is critical to select a technique that is well-suited to the unique properties of the runtime data, ensuring more reliable changepoint recognition.
